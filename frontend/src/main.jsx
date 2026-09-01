@@ -77,6 +77,11 @@ function formatMoney(value) {
   return number.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
+function formatCurrency(value) {
+  const number = Number(value);
+  return (Number.isFinite(number) ? number : 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
 const APPOINTMENT_STATUSES = {
   scheduled: { label: 'Agendado', tone: 'scheduled' },
   pending: { label: 'Agendado', tone: 'scheduled' },
@@ -744,7 +749,7 @@ function Metric({ label, value, money = false }) {
   return (
     <article className="metric">
       <span>{label}</span>
-      <strong>{money ? formatMoney(value) : (value === undefined || value === null ? '—' : value)}</strong>
+      <strong>{money ? formatCurrency(value) : (value === undefined || value === null ? '—' : value)}</strong>
     </article>
   );
 }
@@ -791,7 +796,7 @@ function AdminDashboard({ request }) {
       {!loading && data ? (
         <div className="dashboard-details">
           <article className="data-card"><h2>Serviços mais agendados</h2>{data.top_services?.length ? data.top_services.map((item) => <p className="ranking-row" key={item.name}><span>{item.name}</span><b>{item.appointments}</b></p>) : <p className="muted-copy">Ainda não há atendimentos concluídos no período.</p>}</article>
-          <article className="data-card"><h2>Desempenho e comissão</h2>{data.barber_performance?.length ? data.barber_performance.map((item) => <p className="ranking-row ranking-row--barber" key={item.barber_id}><span><b>{item.name}</b><small>{item.appointments} concluído(s) · {formatMoney(item.revenue)}</small></span><b>{formatMoney(item.estimated_commission)}</b></p>) : <p className="muted-copy">A comissão será calculada quando houver atendimentos concluídos.</p>}</article>
+          <article className="data-card"><h2>Desempenho e comissão</h2>{data.barber_performance?.length ? data.barber_performance.map((item) => <p className="ranking-row ranking-row--barber" key={item.barber_id}><span><b>{item.name}</b><small>{item.appointments} concluído(s) · {formatCurrency(item.revenue)}</small></span><b>{formatCurrency(item.estimated_commission)}</b></p>) : <p className="muted-copy">A comissão será calculada quando houver atendimentos concluídos.</p>}</article>
         </div>
       ) : null}
       {!loading && data ? <p className="admin-caption">Os indicadores consideram os dados registrados na agenda.</p> : null}
@@ -931,7 +936,7 @@ function AdminCustomers({ request }) {
                 <td>{customer.phone}</td>
                 <td>{customer.email || '—'}</td>
                 <td>{customer.visits || 0}</td>
-                <td>{formatMoney(customer.total_spent)}</td>
+                <td>{formatCurrency(customer.total_spent)}</td>
               </tr>
             ))}
             {!loading && !customers.length ? <tr><td colSpan="5" className="table-empty">Nenhum cliente encontrado.</td></tr> : null}
