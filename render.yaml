@@ -1,0 +1,49 @@
+# Talaska Barber Shop: API FastAPI + site React/Vite.
+# O PostgreSQL é fornecido pelo Neon, por isso DATABASE_URL é informado no Render
+# como segredo e não existe um bloco `databases` neste Blueprint.
+services:
+  - type: web
+    name: talaska-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install --no-cache-dir -r requirements.txt
+    # Compatível com o plano gratuito: não inicia a API se a migration falhar.
+    # Em um serviço pago/escalado, mova esta etapa para preDeployCommand.
+    startCommand: "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_INITIAL_PASSWORD
+        sync: false
+      - key: FRONTEND_ORIGINS
+        sync: false
+      - key: CANCELLATION_HOURS
+        value: "2"
+      - key: APPOINTMENT_INTERVAL_MINUTES
+        value: "30"
+
+  - type: web
+    # Atualiza o Static Site público existente; não crie um segundo site para ele.
+    name: talaska-barber-shop
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    autoDeployTrigger: commit
+    envVars:
+      # Valor público, porém compilado pelo Vite: informe a URL real da API + /api.
+      - key: VITE_API_URL
+        sync: false
+    # Faz React Router atender links diretos como /admin após atualizar a página.
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
