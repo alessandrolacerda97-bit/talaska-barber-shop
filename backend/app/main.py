@@ -1,10 +1,14 @@
+import csv
+import io
 import logging
 import re
+from time import monotonic
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, or_, text
 from sqlalchemy.exc import IntegrityError
@@ -14,6 +18,7 @@ from .core.config import get_settings
 from .database import Base, SessionLocal, engine, get_db
 from .models import (
     Appointment,
+    AppointmentStatusHistory,
     Barber,
     BarberHour,
     BlockedTime,
@@ -34,15 +39,21 @@ from .schemas import (
     BusinessHourIn,
     BusinessHoursReplaceIn,
     EntityIn,
+    GalleryIn,
     LoginIn,
+    SettingsUpdateIn,
 )
 from .security import create_token, current_user, verify_password
 
 
 logging.basicConfig(level=logging.INFO)
 APP_TIMEZONE = ZoneInfo("America/Sao_Paulo")
-ACTIVE_APPOINTMENT_STATUSES = ("pending", "confirmed", "completed")
-VALID_APPOINTMENT_STATUSES = (*ACTIVE_APPOINTMENT_STATUSES, "cancelled", "no_show")
+ACTIVE_APPOINTMENT_STATUSES = ("scheduled", "confirmed", "completed", "pending")
+VALID_APPOINTMENT_STATUSES = ("scheduled", "confirmed", "completed", "cancelled", "no_show")
+PUBLIC_CACHE_SECONDS = 300
+LOGIN_WINDOW_SECONDS = 15 * 60
+LOGIN_MAX_ATTEMPTS = 5
+login_attempts: dict[str, list[float]] = {}
 
 app = FastAPI(title="Talaska Barber Shop API", version="1.1.0")
 app.add_middleware(
@@ -94,6 +105,61 @@ def normalize_phone(value: str) -> str:
     if not 10 <= len(phone) <= 15:
         raise HTTPException(422, "Informe um WhatsApp válido, com DDD.")
     return phone
+
+
+def set_public_cache(response: Response) -> None:
+    """Cache only anonymous, non-personal content for a short period."""
+
+    response.headers["Cache-Control"] = f"public, max-age={PUBLIC_CACHE_SECONDS}, stale-while-revalidate=600"
+
+
+def client_address(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    return forwarded or (request.client.host if request.client else "unknown")
+
+
+def login_is_limited(address: str) -> bool:
+    now = monotonic()
+    recent = [attempt for attempt in login_attempts.get(address, []) if now - attempt < LOGIN_WINDOW_SECONDS]
+    login_attempts[address] = recent
+    return len(recent) >= LOGIN_MAX_ATTEMPTS
+
+
+def record_failed_login(address: str) -> None:
+    login_attempts.setdefault(address, []).append(monotonic())
+
+
+def service_price_is_valid(price: Decimal | int | float | None, price_on_request: bool, active: bool) -> None:
+    amount = Decimal(str(price if price is not None else 0))
+    if amount < 0:
+        raise HTTPException(422, "O preço não pode ser negativo.")
+    if active and amount <= 0 and not price_on_request:
+        raise HTTPException(
+            422,
+            "Serviço ativo sem preço: marque 'Valor sob consulta' antes de publicar.",
+        )
+
+
+def register_status_change(
+    db: Session,
+    appointment: Appointment,
+    previous: str | None,
+    current: str,
+    *,
+    user: User | None = None,
+    label: str = "Sistema",
+) -> None:
+    if previous == current:
+        return
+    db.add(
+        AppointmentStatusHistory(
+            appointment_id=appointment.id,
+            previous_status=previous,
+            new_status=current,
+            changed_by_user_id=user.id if user else None,
+            changed_by_label=user.email if user else label,
+        )
+    )
 
 
 def lock_barbers(db: Session, barber_ids: list[int]) -> None:
@@ -284,15 +350,21 @@ def health():
 
 
 @app.post("/api/auth/login")
-def login(data: LoginIn, db: Session = Depends(get_db)):
+def login(data: LoginIn, request: Request, db: Session = Depends(get_db)):
+    address = client_address(request)
+    if login_is_limited(address):
+        raise HTTPException(429, "Muitas tentativas. Aguarde alguns minutos e tente novamente.")
     user = db.query(User).filter(func.lower(User.email) == data.email.lower()).first()
     if not user or not user.active or not verify_password(data.password, user.password_hash):
+        record_failed_login(address)
         raise HTTPException(401, "E-mail ou senha incorretos.")
+    login_attempts.pop(address, None)
     return {"access_token": create_token(user), "token_type": "bearer"}
 
 
 @app.get("/api/services")
-def services(db: Session = Depends(get_db)):
+def services(response: Response, db: Session = Depends(get_db)):
+    set_public_cache(response)
     return [
         out(item)
         for item in db.query(Service).filter_by(active=True).order_by(Service.display_order, Service.name)
@@ -300,17 +372,23 @@ def services(db: Session = Depends(get_db)):
 
 
 @app.get("/api/barbers")
-def barbers(db: Session = Depends(get_db)):
-    return [out(item) for item in db.query(Barber).filter_by(active=True).order_by(Barber.name)]
+def barbers(response: Response, db: Session = Depends(get_db)):
+    set_public_cache(response)
+    return [
+        out(item)
+        for item in db.query(Barber).filter_by(active=True).order_by(Barber.display_order, Barber.name)
+    ]
 
 
 @app.get("/api/gallery")
-def gallery(db: Session = Depends(get_db)):
-    return [out(item) for item in db.query(Gallery).filter_by(active=True)]
+def gallery(response: Response, db: Session = Depends(get_db)):
+    set_public_cache(response)
+    return [out(item) for item in db.query(Gallery).filter_by(active=True).order_by(Gallery.display_order, Gallery.id)]
 
 
 @app.get("/api/settings")
-def settings(db: Session = Depends(get_db)):
+def settings(response: Response, db: Session = Depends(get_db)):
+    set_public_cache(response)
     return {item.key: item.value for item in db.query(Setting)}
 
 
@@ -387,6 +465,8 @@ def book(data: AppointmentIn, db: Session = Depends(get_db)):
     )
     try:
         db.add(appointment)
+        db.flush()
+        register_status_change(db, appointment, None, appointment.status, label="Sistema")
         db.commit()
         db.refresh(appointment)
     except IntegrityError:
@@ -412,17 +492,38 @@ def cancel(token: str, db: Session = Depends(get_db)):
         raise HTTPException(400, "Este agendamento não pode ser cancelado.")
     if appointment.start_datetime - now_brt() < timedelta(hours=get_settings().cancellation_hours):
         raise HTTPException(400, "O prazo para cancelamento já expirou.")
+    previous_status = appointment.status
     appointment.status = "cancelled"
+    register_status_change(db, appointment, previous_status, appointment.status, label="Cliente")
     db.commit()
     return {"message": "Agendamento cancelado com sucesso."}
 
 
 @app.get("/api/admin/dashboard", dependencies=[Depends(current_user)])
-def dashboard(db: Session = Depends(get_db)):
+def dashboard(
+    start: date | None = None,
+    end: date | None = None,
+    barber_id: int | None = None,
+    service_id: int | None = None,
+    status: str | None = None,
+    db: Session = Depends(get_db),
+):
     today = now_brt().date()
     week_end = today + timedelta(days=7)
     month_start = today.replace(day=1)
     base = db.query(Appointment)
+    if start:
+        base = base.filter(Appointment.appointment_date >= start)
+    if end:
+        base = base.filter(Appointment.appointment_date <= end)
+    if barber_id:
+        base = base.filter(Appointment.barber_id == barber_id)
+    if service_id:
+        base = base.filter(Appointment.service_id == service_id)
+    if status:
+        if status not in VALID_APPOINTMENT_STATUSES:
+            raise HTTPException(422, "Status inválido.")
+        base = base.filter(Appointment.status == status)
     completed = base.filter_by(status="completed")
 
     def count(query):
@@ -431,6 +532,38 @@ def dashboard(db: Session = Depends(get_db)):
     def money(query):
         return float(query.with_entities(func.coalesce(func.sum(Appointment.price), 0)).scalar())
 
+    top_services = (
+        completed.join(Service, Appointment.service_id == Service.id)
+        .with_entities(Service.name, func.count(Appointment.id).label("appointments"))
+        .group_by(Service.id, Service.name)
+        .order_by(func.count(Appointment.id).desc(), Service.name)
+        .limit(5)
+        .all()
+    )
+    barber_rows = (
+        completed.join(Barber, Appointment.barber_id == Barber.id)
+        .with_entities(
+            Barber.id,
+            Barber.name,
+            Barber.commission_percentage,
+            func.count(Appointment.id).label("appointments"),
+            func.coalesce(func.sum(Appointment.price), 0).label("revenue"),
+        )
+        .group_by(Barber.id, Barber.name, Barber.commission_percentage)
+        .order_by(func.coalesce(func.sum(Appointment.price), 0).desc(), Barber.name)
+        .all()
+    )
+    performance = [
+        {
+            "barber_id": row.id,
+            "name": row.name,
+            "appointments": row.appointments,
+            "revenue": float(row.revenue),
+            "commission_percentage": float(row.commission_percentage or 0),
+            "estimated_commission": float(row.revenue) * float(row.commission_percentage or 0) / 100,
+        }
+        for row in barber_rows
+    ]
     return {
         "appointments_today": count(base.filter(Appointment.appointment_date == today)),
         "appointments_tomorrow": count(
@@ -439,6 +572,7 @@ def dashboard(db: Session = Depends(get_db)):
         "appointments_week": count(base.filter(Appointment.appointment_date.between(today, week_end))),
         "appointments_month": count(base.filter(Appointment.appointment_date >= month_start)),
         "revenue_today": money(completed.filter(Appointment.appointment_date == today)),
+        "revenue_week": money(completed.filter(Appointment.appointment_date.between(today, week_end))),
         "revenue_month": money(completed.filter(Appointment.appointment_date >= month_start)),
         "ticket_average": float(
             completed.with_entities(func.coalesce(func.avg(Appointment.price), 0)).scalar()
@@ -446,24 +580,78 @@ def dashboard(db: Session = Depends(get_db)):
         "customers": db.query(Customer).count(),
         "cancellations": count(base.filter_by(status="cancelled")),
         "no_shows": count(base.filter_by(status="no_show")),
+        "completed": count(completed),
+        "top_services": [{"name": row.name, "appointments": row.appointments} for row in top_services],
+        "barber_performance": performance,
     }
 
 
 @app.get("/api/admin/appointments", dependencies=[Depends(current_user)])
 def admin_appointments(
-    start: date | None = None, end: date | None = None, db: Session = Depends(get_db)
+    start: date | None = None,
+    end: date | None = None,
+    barber_id: int | None = None,
+    service_id: int | None = None,
+    status: str | None = None,
+    db: Session = Depends(get_db),
 ):
     query = db.query(Appointment).order_by(Appointment.start_datetime.desc())
     if start:
         query = query.filter(Appointment.appointment_date >= start)
     if end:
         query = query.filter(Appointment.appointment_date <= end)
+    if barber_id:
+        query = query.filter(Appointment.barber_id == barber_id)
+    if service_id:
+        query = query.filter(Appointment.service_id == service_id)
+    if status:
+        if status not in VALID_APPOINTMENT_STATUSES:
+            raise HTTPException(422, "Status inválido.")
+        query = query.filter(Appointment.status == status)
     return [appointment_out(appointment, db) for appointment in query]
+
+
+@app.get("/api/admin/appointments/export", dependencies=[Depends(current_user)])
+def export_appointments_csv(
+    start: date | None = None,
+    end: date | None = None,
+    db: Session = Depends(get_db),
+):
+    rows = db.query(Appointment).order_by(Appointment.start_datetime.desc())
+    if start:
+        rows = rows.filter(Appointment.appointment_date >= start)
+    if end:
+        rows = rows.filter(Appointment.appointment_date <= end)
+    stream = io.StringIO()
+    writer = csv.writer(stream, delimiter=";")
+    writer.writerow(["Data", "Horário", "Cliente", "WhatsApp", "Serviço", "Profissional", "Status", "Valor"])
+    for appointment in rows.all():
+        item = appointment_out(appointment, db)
+        writer.writerow(
+            [
+                appointment.appointment_date.isoformat(),
+                appointment.start_datetime.strftime("%H:%M"),
+                item["customer"]["name"] if item["customer"] else "",
+                item["customer"]["phone"] if item["customer"] else "",
+                item["service"]["name"] if item["service"] else "",
+                item["barber"]["name"] if item["barber"] else "",
+                appointment.status,
+                f"{appointment.price:.2f}",
+            ]
+        )
+    return StreamingResponse(
+        iter(["\ufeff" + stream.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=agenda-talaska.csv"},
+    )
 
 
 @app.put("/api/admin/appointments/{appointment_id}", dependencies=[Depends(current_user)])
 def update_appointment(
-    appointment_id: int, data: AppointmentUpdate, db: Session = Depends(get_db)
+    appointment_id: int,
+    data: AppointmentUpdate,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
 ):
     appointment = db.get(Appointment, appointment_id)
     if not appointment:
@@ -510,17 +698,32 @@ def update_appointment(
     appointment.appointment_date = new_start.date()
     if data.service_id is not None:
         appointment.price = new_service.price
+    previous_status = appointment.status
     if data.status is not None:
         appointment.status = data.status
     if "notes" in data.model_fields_set:
         appointment.notes = data.notes.strip() if data.notes else None
     try:
+        register_status_change(db, appointment, previous_status, appointment.status, user=user)
         db.commit()
         db.refresh(appointment)
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "O novo horário está em conflito.")
     return appointment_out(appointment, db)
+
+
+@app.get("/api/admin/appointments/{appointment_id}/history", dependencies=[Depends(current_user)])
+def appointment_history(appointment_id: int, db: Session = Depends(get_db)):
+    if not db.get(Appointment, appointment_id):
+        raise HTTPException(404, "Agendamento não encontrado.")
+    return [
+        out(item)
+        for item in db.query(AppointmentStatusHistory)
+        .filter_by(appointment_id=appointment_id)
+        .order_by(AppointmentStatusHistory.changed_at.desc())
+        .all()
+    ]
 
 
 @app.get("/api/admin/customers", dependencies=[Depends(current_user)])
@@ -795,6 +998,70 @@ def delete_blocked_time(block_id: int, db: Session = Depends(get_db)):
     return {"message": "Bloqueio removido."}
 
 
+# --- Site settings and gallery -----------------------------------------------
+
+
+@app.get("/api/admin/settings", dependencies=[Depends(current_user)])
+def admin_settings(db: Session = Depends(get_db)):
+    return {item.key: item.value for item in db.query(Setting)}
+
+
+@app.put("/api/admin/settings", dependencies=[Depends(current_user)])
+def update_settings(data: SettingsUpdateIn, db: Session = Depends(get_db)):
+    allowed = set(data.model_fields)
+    for key, value in data.model_dump(exclude_unset=True).items():
+        if key not in allowed or value is None:
+            continue
+        normalized = value.strip()
+        if key == "instagram" and normalized and not re.match(r"^https://(www\.)?instagram\.com/", normalized, re.I):
+            raise HTTPException(422, "Informe uma URL válida do Instagram iniciando com https://.")
+        if key == "whatsapp" and normalized:
+            normalize_phone(normalized)
+        setting = db.get(Setting, key)
+        if setting:
+            setting.value = normalized
+        else:
+            db.add(Setting(key=key, value=normalized))
+    db.commit()
+    return {item.key: item.value for item in db.query(Setting)}
+
+
+@app.get("/api/admin/gallery", dependencies=[Depends(current_user)])
+def admin_gallery(db: Session = Depends(get_db)):
+    return [out(item) for item in db.query(Gallery).order_by(Gallery.display_order, Gallery.id)]
+
+
+@app.post("/api/admin/gallery", dependencies=[Depends(current_user)], status_code=201)
+def create_gallery_item(data: GalleryIn, db: Session = Depends(get_db)):
+    item = Gallery(**data.model_dump())
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return out(item)
+
+
+@app.put("/api/admin/gallery/{item_id}", dependencies=[Depends(current_user)])
+def update_gallery_item(item_id: int, data: GalleryIn, db: Session = Depends(get_db)):
+    item = db.get(Gallery, item_id)
+    if not item:
+        raise HTTPException(404, "Imagem não encontrada.")
+    for key, value in data.model_dump().items():
+        setattr(item, key, value.strip() if isinstance(value, str) else value)
+    db.commit()
+    db.refresh(item)
+    return out(item)
+
+
+@app.delete("/api/admin/gallery/{item_id}", dependencies=[Depends(current_user)])
+def delete_gallery_item(item_id: int, db: Session = Depends(get_db)):
+    item = db.get(Gallery, item_id)
+    if not item:
+        raise HTTPException(404, "Imagem não encontrada.")
+    db.delete(item)
+    db.commit()
+    return {"message": "Imagem removida da galeria."}
+
+
 # --- Other administrative records -------------------------------------------
 
 
@@ -803,7 +1070,8 @@ def list_entities(kind: str, db: Session = Depends(get_db)):
     model = {"barbers": Barber, "services": Service}.get(kind)
     if not model:
         raise HTTPException(404, "Recurso não encontrado.")
-    return [out(item) for item in db.query(model).order_by(model.id).all()]
+    order_columns = (Barber.display_order, Barber.name) if kind == "barbers" else (Service.display_order, Service.name)
+    return [out(item) for item in db.query(model).order_by(*order_columns).all()]
 
 
 @app.post("/api/admin/{kind}", dependencies=[Depends(current_user)], status_code=201)
@@ -821,6 +1089,12 @@ def create_entity(kind: str, data: EntityIn, db: Session = Depends(get_db)):
         for key, value in data.model_dump(exclude_none=True).items()
         if key in allowed
     }
+    if kind == "services":
+        service_price_is_valid(
+            values.get("price", 0),
+            bool(values.get("price_on_request", False)),
+            bool(values.get("active", True)),
+        )
     item = model(**values)
     try:
         db.add(item)
@@ -838,6 +1112,13 @@ def edit_entity(kind: str, item_id: int, data: EntityIn, db: Session = Depends(g
     item = db.get(model, item_id) if model else None
     if not item:
         raise HTTPException(404, "Registro não encontrado.")
+    if kind == "services":
+        requested = data.model_dump(exclude_unset=True)
+        service_price_is_valid(
+            requested.get("price", item.price),
+            bool(requested.get("price_on_request", item.price_on_request)),
+            bool(requested.get("active", item.active)),
+        )
     protected_fields = {"id", "created_at", "duration_minutes"} if kind == "barbers" else {"id", "created_at"}
     for key, value in data.model_dump(exclude_unset=True).items():
         if key in protected_fields or not hasattr(item, key):
@@ -853,3 +1134,4 @@ def edit_entity(kind: str, item_id: int, data: EntityIn, db: Session = Depends(g
         db.rollback()
         raise HTTPException(409, "Já existe um registro com esse nome.")
     return out(item)
+

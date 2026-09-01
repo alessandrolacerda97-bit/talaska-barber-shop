@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+Sitemap: https://talaska-barber-shop.onrender.com/sitemap.xml
+

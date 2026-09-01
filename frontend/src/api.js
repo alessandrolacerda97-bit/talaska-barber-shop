@@ -17,6 +17,7 @@ export async function api(path, options = {}) {
     body,
     token,
     signal,
+    responseType,
     headers: extraHeaders = {},
   } = options;
   const headers = { ...extraHeaders };
@@ -39,6 +40,8 @@ export async function api(path, options = {}) {
   } catch {
     throw new ApiError('Não foi possível conectar ao sistema. Tente novamente em instantes.', 0);
   }
+
+  if (response.ok && responseType === 'blob') return response.blob();
 
   const contentType = response.headers.get('content-type') || '';
   let payload = null;
@@ -65,3 +68,4 @@ export function query(params) {
   const result = search.toString();
   return result ? '?' + result : '';
 }
+

@@ -111,9 +111,30 @@ O Blueprint contém uma regra de rewrite `/* -> /index.html`. Ela é necessária
 - Sessão: `POST /api/auth/login`
 - Administração: `/api/admin/dashboard`, `/api/admin/appointments`, `/api/admin/customers`, `/api/admin/barbers` e `/api/admin/services`
 
+## Atualização profissional (migration `0003_product_hardening`)
+
+Antes do deploy, faça um snapshot/backup no Neon e aplique a migration normalmente:
+
+```bash
+cd backend
+alembic upgrade head
+```
+
+Ela é aditiva e preserva os dados atuais. Os serviços existentes com preço `0`
+passam a ser marcados como **Valor sob consulta**; nenhum preço é inventado. A
+versão também cria histórico de status de agendamentos, índices de consulta,
+ordenamento de barbeiros e metadados da galeria. O Instagram oficial é salvo
+em `settings.instagram` e pode ser alterado pelo painel em **Configurações**.
+
+O painel passa a disponibilizar exportação CSV da agenda, galeria de fotos e
+configurações públicas. Fotos devem ser cadastradas apenas com URL autorizada;
+nenhuma imagem genérica é incluída automaticamente.
+
 ## Segurança operacional
 
 - Nunca versione `.env`, `DATABASE_URL`, senhas ou tokens.
 - Mantenha `FRONTEND_ORIGINS` restrito aos domínios realmente usados pelo site.
 - Troque a senha administrativa inicial após o primeiro acesso e registre os dados de acesso fora do repositório.
+- O login limita tentativas repetidas por endereço de origem. A sessão expira em 12 horas e as rotas administrativas também são protegidas na API.
 - Antes de alterar preços, agenda ou equipe em produção, valide a ação no painel e confira o resultado pelo site público.
+

@@ -5,12 +5,15 @@ import {
   ArrowRight,
   Ban,
   Calendar,
+  CircleDollarSign,
   CheckCircle,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
   Clock,
   ExternalLink,
+  Download,
+  Image as ImageIcon,
   Instagram,
   LayoutDashboard,
   Lock,
@@ -24,6 +27,7 @@ import {
   Save,
   Scissors,
   Search,
+  Settings,
   ShieldCheck,
   Trash2,
   UserCog,
@@ -68,9 +72,22 @@ const fallbackBarbers = [
 function formatMoney(value) {
   const number = Number(value);
   if (value === null || value === undefined || Number.isNaN(number) || number <= 0) {
-    return 'Valor a consultar';
+    return 'Valor sob consulta';
   }
   return number.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+const APPOINTMENT_STATUSES = {
+  scheduled: { label: 'Agendado', tone: 'scheduled' },
+  pending: { label: 'Agendado', tone: 'scheduled' },
+  confirmed: { label: 'Confirmado', tone: 'confirmed' },
+  completed: { label: 'Concluído', tone: 'completed' },
+  cancelled: { label: 'Cancelado', tone: 'cancelled' },
+  no_show: { label: 'Não compareceu', tone: 'no-show' },
+};
+
+function appointmentStatus(value) {
+  return APPOINTMENT_STATUSES[value] || { label: 'Agendado', tone: 'scheduled' };
 }
 
 function formatDate(value, options = {}) {
@@ -133,7 +150,15 @@ function portraitFor(barber) {
   const name = String((barber && barber.name) || '').toLowerCase();
   if (name.includes('mois')) return moisesPhoto;
   if (name.includes('herick')) return herickPhoto;
-  return wilianPhoto;
+  if (name.includes('wil')) return wilianPhoto;
+  return '';
+}
+
+function BarberPortrait({ barber, className = '', alt = '' }) {
+  const source = portraitFor(barber);
+  if (source) return <img className={className} src={source} alt={alt} loading="lazy" />;
+  const initials = String(barber?.name || '?').trim().slice(0, 2).toUpperCase();
+  return <span className={'barber-placeholder ' + className} aria-label={alt || 'Foto ainda não cadastrada'}>{initials}</span>;
 }
 
 function whatsappLink(phone, message) {
@@ -166,7 +191,7 @@ function Notice({ children, tone = 'error' }) {
   );
 }
 
-function PublicHeader({ onBook }) {
+function PublicHeader({ onBook, instagram }) {
   const [isOpen, setIsOpen] = useState(false);
   const links = [
     ['Início', '#inicio'],
@@ -189,6 +214,7 @@ function PublicHeader({ onBook }) {
         {links.map(([label, href]) => (
           <a key={href} href={href} onClick={closeMenu}>{label}</a>
         ))}
+        {instagram ? <a className="site-nav__instagram" href={instagram} target="_blank" rel="noopener noreferrer" aria-label="Instagram da Talaska Barber Shop"><Instagram size={18} /></a> : null}
         <Button className="button--gold header-book" onClick={() => { closeMenu(); onBook(); }} icon={Calendar}>
           Agendar
         </Button>
@@ -217,7 +243,7 @@ function ServiceCard({ service, onBook }) {
 function BarberCard({ barber, onBook }) {
   return (
     <article className="barber-card">
-      <img src={portraitFor(barber)} alt={'Barbeiro ' + barber.name} />
+      <BarberPortrait barber={barber} alt={'Barbeiro ' + barber.name} />
       <div className="barber-card__content">
         <h3>{barber.name}</h3>
         <p>{barber.specialties || barber.bio || 'Profissional Talaska Barber Shop'}</p>
@@ -248,14 +274,14 @@ function Footer({ settings }) {
           <MapPin size={30} strokeWidth={1.6} />
           <div>
             <span>Localização</span>
-            <a href={'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(address)} target="_blank" rel="noreferrer">{address}</a>
+            <a href={'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(address)} target="_blank" rel="noopener noreferrer">{address}</a>
           </div>
         </div>
       </div>
       <div className="footer-bottom">
         <span>© {new Date().getFullYear()} Talaska Barber Shop</span>
-        {instagram ? <a href={instagram} target="_blank" rel="noreferrer"><Instagram size={14} /> Instagram</a> : null}
-        <span>Criado por <a href={PORTFOLIO_URL} target="_blank" rel="noreferrer">lacerda.dev</a></span>
+        {instagram ? <a href={instagram} target="_blank" rel="noopener noreferrer"><Instagram size={14} /> Instagram</a> : null}
+        <span>Criado por <a href={PORTFOLIO_URL} target="_blank" rel="noopener noreferrer">lacerda.dev</a></span>
       </div>
     </footer>
   );
@@ -420,8 +446,8 @@ function BookingModal({ close, services, barbers, presetBarberId, presetServiceI
                     <small>Mostraremos o melhor horário disponível.</small>
                   </button>
                   {barbers.map((barber) => (
-                    <button key={barber.id || barber.name} type="button" className="booking-choice booking-choice--barber" onClick={() => selectBarber(barber.id)}>
-                      <img src={portraitFor(barber)} alt="" />
+                    <button key={barber.id || barber.name} type="button" className={'booking-choice booking-choice--barber' + (Number(form.barber_id) === Number(barber.id) ? ' is-selected' : '')} onClick={() => selectBarber(barber.id)}>
+                      <BarberPortrait barber={barber} alt="" />
                       <b>{barber.name}</b>
                       <small>{barber.specialties || barber.bio || 'Talaska Barber Shop'}</small>
                     </button>
@@ -464,7 +490,7 @@ function BookingModal({ close, services, barbers, presetBarberId, presetServiceI
                   {slots.filter((group) => group.slots && group.slots.length).map((group) => (
                     <article className="slot-group" key={group.barber && group.barber.id}>
                       <div>
-                        <img src={portraitFor(group.barber)} alt="" />
+                        <BarberPortrait barber={group.barber} alt="" />
                         <b>{group.barber && group.barber.name}</b>
                       </div>
                       <div className="slot-grid">
@@ -525,9 +551,38 @@ function BookingModal({ close, services, barbers, presetBarberId, presetServiceI
   );
 }
 
+function GallerySection({ items }) {
+  const [selected, setSelected] = useState(null);
+  return (
+    <section id="galeria" className="public-section gallery-section">
+      <p className="eyebrow">— NOSSO TRABALHO —</p>
+      <h2>Detalhes que fazem a diferença</h2>
+      {items.length ? (
+        <div className="gallery-grid">
+          {items.map((item) => (
+            <button key={item.id} className="gallery-card" type="button" onClick={() => setSelected(item)} aria-label={'Ampliar ' + (item.title || 'foto da galeria')}>
+              <img src={item.image_url} alt={item.alt_text || item.title || 'Trabalho da Talaska Barber Shop'} loading="lazy" />
+              {item.title ? <span>{item.title}</span> : null}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="gallery-empty"><ImageIcon size={31} /><p>As fotos reais dos trabalhos serão adicionadas em breve.</p></div>
+      )}
+      {selected ? (
+        <div className="lightbox" role="dialog" aria-modal="true" aria-label={selected.title || 'Imagem ampliada'} onClick={() => setSelected(null)}>
+          <button type="button" className="modal-close" onClick={() => setSelected(null)} aria-label="Fechar imagem"><X /></button>
+          <img src={selected.image_url} alt={selected.alt_text || selected.title || 'Trabalho da Talaska Barber Shop'} onClick={(event) => event.stopPropagation()} />
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function Home() {
   const [services, setServices] = useState(fallbackServices);
   const [barbers, setBarbers] = useState(fallbackBarbers);
+  const [gallery, setGallery] = useState([]);
   const [settings, setSettings] = useState({});
   const [apiNotice, setApiNotice] = useState('');
   const [booking, setBooking] = useState(null);
@@ -539,9 +594,10 @@ function Home() {
         api('/services'),
         api('/barbers'),
         api('/settings'),
+        api('/gallery'),
       ]);
       if (!active) return;
-      const [serviceResult, barberResult, settingsResult] = results;
+      const [serviceResult, barberResult, settingsResult, galleryResult] = results;
       if (serviceResult.status === 'fulfilled' && Array.isArray(serviceResult.value) && serviceResult.value.length) {
         setServices(serviceResult.value);
       }
@@ -549,6 +605,7 @@ function Home() {
         setBarbers(barberResult.value);
       }
       if (settingsResult.status === 'fulfilled' && settingsResult.value) setSettings(settingsResult.value);
+      if (galleryResult.status === 'fulfilled' && Array.isArray(galleryResult.value)) setGallery(galleryResult.value);
       if (serviceResult.status === 'rejected' || barberResult.status === 'rejected') {
         setApiNotice('O agendamento online está indisponível no momento. Você ainda pode chamar a Talaska pelo WhatsApp.');
       }
@@ -566,16 +623,16 @@ function Home() {
 
   return (
     <>
-      <PublicHeader onBook={openBooking} />
+      <PublicHeader onBook={openBooking} instagram={settings.instagram} />
       <main>
-        <section id="inicio" className="hero">
+        <section id="inicio" className="hero" style={{ '--hero-desktop-position': settings.hero_desktop_position || '72% center', '--hero-mobile-position': settings.hero_mobile_position || '64% center' }}>
           <div className="hero-copy">
             <p className="eyebrow">— MAIS QUE UM CORTE —</p>
             <h1>TRANSFORME<br />SEU ESTILO</h1>
             <p className="hero-copy__description">Cortes premium, barba impecável e atendimento que faz a diferença.</p>
             <div className="hero-actions">
               <Button className="button--gold" icon={Calendar} onClick={openBooking}>Agende seu horário</Button>
-              <a className="hero-whatsapp" href={whatsappLink(whatsapp, heroMessage)} target="_blank" rel="noreferrer">Fale pelo WhatsApp <ArrowRight size={14} /></a>
+              <a className="hero-whatsapp" href={whatsappLink(whatsapp, heroMessage)} target="_blank" rel="noopener noreferrer">Fale pelo WhatsApp <ArrowRight size={14} /></a>
             </div>
           </div>
           <picture className="hero-photo">
@@ -603,6 +660,8 @@ function Home() {
           </div>
         </section>
 
+        <GallerySection items={gallery} />
+
         <section className="about-section">
           <div>
             <p className="eyebrow">— SOBRE A TALASKA —</p>
@@ -612,14 +671,15 @@ function Home() {
           <div className="about-actions">
             <MapPin size={34} />
             <strong>{settings.address || 'Avenida Santa Rita, 627 · Centro'}</strong>
-            <a href={'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(settings.address || 'Avenida Santa Rita, 627')} target="_blank" rel="noreferrer">
+            <a href={'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(settings.address || 'Avenida Santa Rita, 627')} target="_blank" rel="noopener noreferrer">
               Como chegar <ExternalLink size={15} />
             </a>
+            {settings.instagram ? <a className="instagram-follow" href={settings.instagram} target="_blank" rel="noopener noreferrer"><Instagram size={17} /> Siga a Talaska no Instagram</a> : null}
           </div>
         </section>
       </main>
       <Footer settings={settings} />
-      <a className="whatsapp-float" href={whatsappLink(whatsapp, heroMessage)} target="_blank" rel="noreferrer" aria-label="Falar com a Talaska pelo WhatsApp">
+      <a className="whatsapp-float" href={whatsappLink(whatsapp, heroMessage)} target="_blank" rel="noopener noreferrer" aria-label="Falar com a Talaska pelo WhatsApp">
         <Phone size={22} />
       </a>
       {booking ? (
@@ -721,10 +781,19 @@ function AdminDashboard({ request }) {
         <Metric label="Agendamentos na semana" value={data && data.appointments_week} />
         <Metric label="Clientes cadastrados" value={data && data.customers} />
         <Metric label="Faturamento hoje" value={data && data.revenue_today} money />
+        <Metric label="Faturamento da semana" value={data && data.revenue_week} money />
         <Metric label="Faturamento do mês" value={data && data.revenue_month} money />
         <Metric label="Ticket médio" value={data && data.ticket_average} money />
+        <Metric label="Concluídos" value={data && data.completed} />
         <Metric label="Cancelamentos" value={data && data.cancellations} />
+        <Metric label="Não compareceram" value={data && data.no_shows} />
       </div>
+      {!loading && data ? (
+        <div className="dashboard-details">
+          <article className="data-card"><h2>Serviços mais agendados</h2>{data.top_services?.length ? data.top_services.map((item) => <p className="ranking-row" key={item.name}><span>{item.name}</span><b>{item.appointments}</b></p>) : <p className="muted-copy">Ainda não há atendimentos concluídos no período.</p>}</article>
+          <article className="data-card"><h2>Desempenho e comissão</h2>{data.barber_performance?.length ? data.barber_performance.map((item) => <p className="ranking-row ranking-row--barber" key={item.barber_id}><span><b>{item.name}</b><small>{item.appointments} concluído(s) · {formatMoney(item.revenue)}</small></span><b>{formatMoney(item.estimated_commission)}</b></p>) : <p className="muted-copy">A comissão será calculada quando houver atendimentos concluídos.</p>}</article>
+        </div>
+      ) : null}
       {!loading && data ? <p className="admin-caption">Os indicadores consideram os dados registrados na agenda.</p> : null}
     </section>
   );
@@ -737,19 +806,34 @@ function AdminAppointments({ request }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [savingId, setSavingId] = useState(null);
+  const [status, setStatus] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const data = await request('/admin/appointments' + query({ start, end }));
+      const data = await request('/admin/appointments' + query({ start, end, status }));
       setAppointments(Array.isArray(data) ? data : []);
     } catch (requestError) {
       setError(humanError(requestError));
     } finally {
       setLoading(false);
     }
-  }, [request, start, end]);
+  }, [request, start, end, status]);
+
+  async function exportCsv() {
+    try {
+      const blob = await request('/admin/appointments/export' + query({ start, end }), { responseType: 'blob' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'agenda-talaska.csv';
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (requestError) {
+      setError(humanError(requestError));
+    }
+  }
 
   useEffect(() => { load(); }, [load]);
 
@@ -770,11 +854,12 @@ function AdminAppointments({ request }) {
     <section className="admin-view">
       <div className="admin-view__heading">
         <div><p className="eyebrow">AGENDA</p><h1>Agendamentos</h1></div>
-        <Button className="button--light" icon={RefreshCw} onClick={load} disabled={loading}>Atualizar</Button>
+        <div className="heading-actions"><Button className="button--light" icon={Download} onClick={exportCsv}>Exportar CSV</Button><Button className="button--light" icon={RefreshCw} onClick={load} disabled={loading}>Atualizar</Button></div>
       </div>
       <div className="filter-row">
         <label>De <input type="date" value={start} onChange={(event) => setStart(event.target.value)} /></label>
         <label>Até <input type="date" value={end} onChange={(event) => setEnd(event.target.value)} /></label>
+        <label>Status <select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">Todos</option>{Object.entries(APPOINTMENT_STATUSES).filter(([value]) => value !== 'pending').map(([value, item]) => <option key={value} value={value}>{item.label}</option>)}</select></label>
       </div>
       {error ? <Notice>{error}</Notice> : null}
       <div className="data-card table-scroll">
@@ -788,8 +873,8 @@ function AdminAppointments({ request }) {
                 <td>{appointment.service && appointment.service.name}</td>
                 <td>{appointment.barber && appointment.barber.name}</td>
                 <td>
-                  <select value={appointment.status || 'pending'} disabled={savingId === appointment.id} onChange={(event) => updateStatus(appointment, event.target.value)}>
-                    <option value="pending">Pendente</option>
+                  <select className={'appointment-status appointment-status--' + appointmentStatus(appointment.status).tone} value={appointment.status === 'pending' ? 'scheduled' : appointment.status || 'scheduled'} disabled={savingId === appointment.id} onChange={(event) => updateStatus(appointment, event.target.value)}>
+                    <option value="scheduled">Agendado</option>
                     <option value="confirmed">Confirmado</option>
                     <option value="completed">Concluído</option>
                     <option value="cancelled">Cancelado</option>
@@ -858,11 +943,11 @@ function AdminCustomers({ request }) {
 }
 
 function emptyBarber() {
-  return { name: '', bio: '', specialties: '', photo_url: '', commission_percentage: '', active: true };
+  return { name: '', bio: '', specialties: '', photo_url: '', commission_percentage: '', display_order: '', active: true };
 }
 
 function emptyService() {
-  return { name: '', description: '', price: '', duration_minutes: '45', image_url: '', display_order: '', active: true };
+  return { name: '', description: '', price: '', price_on_request: false, duration_minutes: '45', image_url: '', display_order: '', active: true };
 }
 
 function EntityManager({ request, kind }) {
@@ -920,6 +1005,7 @@ function EntityManager({ request, kind }) {
     const result = { ...form };
     if (isBarber) {
       result.commission_percentage = form.commission_percentage === '' ? undefined : Number(form.commission_percentage);
+      result.display_order = form.display_order === '' ? undefined : Number(form.display_order);
     } else {
       result.price = form.price === '' ? undefined : Number(form.price);
       result.duration_minutes = form.duration_minutes === '' ? undefined : Number(form.duration_minutes);
@@ -930,6 +1016,12 @@ function EntityManager({ request, kind }) {
 
   async function submit(event) {
     event.preventDefault();
+    const effectivePrice = Number(form.price || 0);
+    if (!isBarber && form.active && effectivePrice <= 0 && !form.price_on_request) {
+      setError('Informe um valor ou marque “Valor sob consulta” para publicar este serviço.');
+      return;
+    }
+    if (!isBarber && form.active && effectivePrice <= 0 && form.price_on_request && !window.confirm('Confirmar publicação como “Valor sob consulta”? O site não exibirá R$ 0,00.')) return;
     setSaving(true);
     setError('');
     setSuccess('');
@@ -991,6 +1083,9 @@ function EntityManager({ request, kind }) {
               <label>Comissão (%)
                 <input type="number" min="0" max="100" step="0.01" value={form.commission_percentage || ''} onChange={(event) => update({ commission_percentage: event.target.value })} placeholder="0" />
               </label>
+              <label>Ordem de exibição
+                <input type="number" min="0" value={form.display_order || ''} onChange={(event) => update({ display_order: event.target.value })} placeholder="1" />
+              </label>
             </>
           ) : (
             <>
@@ -1005,6 +1100,10 @@ function EntityManager({ request, kind }) {
                   <input type="number" min="5" max="480" step="5" value={form.duration_minutes || ''} onChange={(event) => update({ duration_minutes: event.target.value })} />
                 </label>
               </div>
+              <label className="toggle-row toggle-row--consultation">
+                <input type="checkbox" checked={Boolean(form.price_on_request)} onChange={(event) => update({ price_on_request: event.target.checked })} />
+                <span><b>Valor sob consulta</b><small>Use somente quando o serviço não tiver preço definido. O site nunca mostrará R$ 0,00.</small></span>
+              </label>
               <label>URL da imagem <small>opcional</small>
                 <input type="url" value={form.image_url || ''} onChange={(event) => update({ image_url: event.target.value })} placeholder="https://..." />
               </label>
@@ -1023,7 +1122,7 @@ function EntityManager({ request, kind }) {
           <h2>{isBarber ? 'Equipe cadastrada' : 'Serviços cadastrados'}</h2>
           {items.map((item) => (
             <article className="entity-row" key={item.id}>
-              {isBarber ? <img src={portraitFor(item)} alt="" /> : <div className="entity-row__icon"><Scissors size={19} /></div>}
+              {isBarber ? <BarberPortrait barber={item} alt="" /> : <div className="entity-row__icon"><Scissors size={19} /></div>}
               <div>
                 <b>{item.name}</b>
                 <small>{isBarber ? (item.specialties || item.bio || 'Sem especialidade informada') : formatMoney(item.price) + ' · ' + item.duration_minutes + ' min'}</small>
@@ -1040,6 +1139,46 @@ function EntityManager({ request, kind }) {
       </div>
     </section>
   );
+}
+
+function AdminSettings({ request }) {
+  const [form, setForm] = useState({ instagram: '', whatsapp: '', address: '', about: '', hero_desktop_position: '', hero_mobile_position: '' });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  useEffect(() => {
+    request('/admin/settings').then((data) => setForm((current) => ({ ...current, ...data }))).catch((requestError) => setError(humanError(requestError)));
+  }, [request]);
+
+  async function submit(event) {
+    event.preventDefault(); setSaving(true); setError(''); setSuccess('');
+    try { setForm(await request('/admin/settings', { method: 'PUT', body: form })); setSuccess('Configurações salvas. O site público atualizará em alguns minutos.'); }
+    catch (requestError) { setError(humanError(requestError)); }
+    finally { setSaving(false); }
+  }
+
+  return <section className="admin-view"><div className="admin-view__heading"><div><p className="eyebrow">SITE PÚBLICO</p><h1>Configurações</h1></div></div><form className="data-card editor-form admin-settings" onSubmit={submit}>
+    {error ? <Notice>{error}</Notice> : null}{success ? <Notice tone="success">{success}</Notice> : null}
+    <label>Instagram oficial<input type="url" value={form.instagram || ''} onChange={(event) => setForm((current) => ({ ...current, instagram: event.target.value }))} placeholder="https://www.instagram.com/..." /></label>
+    <label>WhatsApp<input value={form.whatsapp || ''} onChange={(event) => setForm((current) => ({ ...current, whatsapp: event.target.value }))} placeholder="Somente números com DDD" /></label>
+    <label>Endereço<input value={form.address || ''} onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))} /></label>
+    <label>Texto sobre a barbearia<textarea rows="4" value={form.about || ''} onChange={(event) => setForm((current) => ({ ...current, about: event.target.value }))} /></label>
+    <div className="form-pair"><label>Posição imagem desktop<input value={form.hero_desktop_position || ''} onChange={(event) => setForm((current) => ({ ...current, hero_desktop_position: event.target.value }))} placeholder="Ex.: 72% center" /></label><label>Posição imagem celular<input value={form.hero_mobile_position || ''} onChange={(event) => setForm((current) => ({ ...current, hero_mobile_position: event.target.value }))} placeholder="Ex.: 64% center" /></label></div>
+    <p className="muted-copy">Use valores CSS de posição, como “72% center”, apenas se precisar ajustar o enquadramento sem trocar a foto.</p>
+    <Button type="submit" className="button--gold" icon={Save} disabled={saving}>{saving ? 'Salvando...' : 'Salvar configurações'}</Button>
+  </form></section>;
+}
+
+function AdminGallery({ request }) {
+  const blank = () => ({ image_url: '', title: '', alt_text: '', category: '', display_order: '', active: true });
+  const [items, setItems] = useState([]); const [form, setForm] = useState(blank); const [editingId, setEditingId] = useState(null); const [error, setError] = useState(''); const [saving, setSaving] = useState(false);
+  const load = useCallback(async () => { try { const data = await request('/admin/gallery'); setItems(Array.isArray(data) ? data : []); } catch (requestError) { setError(humanError(requestError)); } }, [request]);
+  useEffect(() => { load(); }, [load]);
+  function update(values) { setForm((current) => ({ ...current, ...values })); }
+  async function submit(event) { event.preventDefault(); setSaving(true); setError(''); try { const body = { ...form, display_order: form.display_order === '' ? 0 : Number(form.display_order) }; const result = await request('/admin/gallery' + (editingId ? '/' + editingId : ''), { method: editingId ? 'PUT' : 'POST', body }); setItems((current) => editingId ? current.map((item) => item.id === editingId ? result : item) : [...current, result]); setForm(blank()); setEditingId(null); } catch (requestError) { setError(humanError(requestError)); } finally { setSaving(false); } }
+  async function remove(item) { if (!window.confirm('Remover esta imagem da galeria?')) return; try { await request('/admin/gallery/' + item.id, { method: 'DELETE' }); setItems((current) => current.filter((entry) => entry.id !== item.id)); } catch (requestError) { setError(humanError(requestError)); } }
+  return <section className="admin-view"><div className="admin-view__heading"><div><p className="eyebrow">SITE PÚBLICO</p><h1>Galeria de trabalhos</h1></div><Button className="button--light" icon={RefreshCw} onClick={load}>Atualizar</Button></div><div className="admin-two-columns"><form className="data-card editor-form" onSubmit={submit}><h2>{editingId ? 'Editar imagem' : 'Adicionar foto real'}</h2>{error ? <Notice>{error}</Notice> : null}<label>URL da imagem<input type="url" value={form.image_url} onChange={(event) => update({ image_url: event.target.value })} placeholder="https://..." required /></label><label>Título <small>opcional</small><input value={form.title || ''} onChange={(event) => update({ title: event.target.value })} /></label><label>Texto alternativo<input value={form.alt_text || ''} onChange={(event) => update({ alt_text: event.target.value })} placeholder="Descreva a foto para acessibilidade" /></label><div className="form-pair"><label>Categoria <input value={form.category || ''} onChange={(event) => update({ category: event.target.value })} /></label><label>Ordem<input type="number" min="0" value={form.display_order || ''} onChange={(event) => update({ display_order: event.target.value })} /></label></div><label className="toggle-row"><input type="checkbox" checked={Boolean(form.active)} onChange={(event) => update({ active: event.target.checked })} /><span><b>Publicar imagem</b><small>Aparece no site quando estiver ativa.</small></span></label><Button className="button--gold" type="submit" icon={Save} disabled={saving}>{saving ? 'Salvando...' : editingId ? 'Salvar imagem' : 'Adicionar à galeria'}</Button></form><div className="data-card gallery-admin-list"><h2>Imagens cadastradas</h2>{items.map((item) => <article className="gallery-admin-row" key={item.id}><img src={item.image_url} alt="" loading="lazy" /><div><b>{item.title || 'Sem título'}</b><small>{item.active ? 'Ativa' : 'Inativa'} · Ordem {item.display_order || 0}</small></div><div className="entity-row__actions"><button type="button" onClick={() => { setForm({ ...item, display_order: String(item.display_order || '') }); setEditingId(item.id); }} aria-label="Editar imagem"><Pencil size={16} /></button><button type="button" onClick={() => remove(item)} aria-label="Remover imagem"><Trash2 size={16} /></button></div></article>)}{!items.length ? <div className="empty-state"><ImageIcon size={27} /><p>Sem fotos cadastradas. Adicione apenas fotos reais autorizadas.</p></div> : null}</div></div></section>;
 }
 
 function AdminHours({ request }) {
@@ -1320,6 +1459,8 @@ function AdminShell({ token, onLogout }) {
     ['customers', 'Clientes', Users],
     ['barbers', 'Barbeiros', UserCog],
     ['services', 'Serviços', Scissors],
+    ['gallery', 'Galeria', ImageIcon],
+    ['settings', 'Configurações', Settings],
     ['hours', 'Horários', Clock],
     ['blocks', 'Bloqueios', Ban],
   ];
@@ -1334,6 +1475,8 @@ function AdminShell({ token, onLogout }) {
   if (section === 'customers') view = <AdminCustomers request={request} />;
   if (section === 'barbers') view = <EntityManager request={request} kind="barbers" />;
   if (section === 'services') view = <EntityManager request={request} kind="services" />;
+  if (section === 'gallery') view = <AdminGallery request={request} />;
+  if (section === 'settings') view = <AdminSettings request={request} />;
   if (section === 'hours') view = <AdminHours request={request} />;
   if (section === 'blocks') view = <AdminBlocks request={request} />;
 
@@ -1376,3 +1519,4 @@ function Admin() {
 
 const root = createRoot(document.getElementById('root'));
 root.render(window.location.pathname.startsWith('/admin') ? <Admin /> : <Home />);
+

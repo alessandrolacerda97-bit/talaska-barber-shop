@@ -39,6 +39,7 @@ class EntityIn(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=100)
     description: str | None = Field(default=None, max_length=2000)
     price: Decimal | None = Field(default=None, ge=0)
+    price_on_request: bool | None = None
     duration_minutes: int | None = Field(default=None, ge=5, le=480)
     active: bool | None = None
     bio: str | None = Field(default=None, max_length=2000)
@@ -47,6 +48,27 @@ class EntityIn(BaseModel):
     commission_percentage: Decimal | None = Field(default=None, ge=0, le=100)
     image_url: str | None = Field(default=None, max_length=500)
     display_order: int | None = Field(default=None, ge=0)
+
+
+class GalleryIn(BaseModel):
+    image_url: str = Field(min_length=5, max_length=500)
+    title: str | None = Field(default=None, max_length=120)
+    alt_text: str | None = Field(default=None, max_length=200)
+    category: str | None = Field(default=None, max_length=50)
+    display_order: int | None = Field(default=0, ge=0)
+    active: bool = True
+
+
+class SettingsUpdateIn(BaseModel):
+    """Only public, presentation-related settings are editable here."""
+
+    business_name: str | None = Field(default=None, max_length=120)
+    whatsapp: str | None = Field(default=None, max_length=30)
+    address: str | None = Field(default=None, max_length=300)
+    instagram: str | None = Field(default=None, max_length=500)
+    about: str | None = Field(default=None, max_length=2000)
+    hero_desktop_position: str | None = Field(default=None, max_length=60)
+    hero_mobile_position: str | None = Field(default=None, max_length=60)
 
 
 class HourIn(BaseModel):
@@ -94,3 +116,4 @@ class BlockedTimeIn(BaseModel):
 
 class BlockedTimesReplaceIn(BaseModel):
     blocked_times: list[BlockedTimeIn] = Field(default_factory=list)
+
