@@ -130,6 +130,19 @@ O painel passa a disponibilizar exportação CSV da agenda, galeria de fotos e
 configurações públicas. Fotos devem ser cadastradas apenas com URL autorizada;
 nenhuma imagem genérica é incluída automaticamente.
 
+## Desempenho e plano gratuito do Render
+
+O frontend usa carregamento sob demanda para a galeria e a API envia cache curto
+somente para catálogo, equipe, galeria e configurações públicas. Dados pessoais,
+agenda e rotas administrativas não são colocados em cache público.
+
+No plano Free do Render a API pode hibernar por inatividade. A primeira
+requisição após esse período pode levar cerca de 50 segundos — isso é uma
+limitação do plano, não um erro do agendamento. Para eliminar o cold start, use
+uma instância Render sempre ativa/paga ou hospede a API em uma arquitetura sem
+hibernação. Não é recomendado criar chamadas artificiais apenas para esconder
+essa limitação.
+
 ## Segurança operacional
 
 - Nunca versione `.env`, `DATABASE_URL`, senhas ou tokens.
